@@ -3,7 +3,7 @@ import io, os, copy, tempfile, re
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
-from reportlab.lib.utils import ImageReader  # (no se usa ahora, pero queda para futuro)
+from reportlab.lib.utils import ImageReader  # reservado para futuro (logos)
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, ArrayObject
 
@@ -14,8 +14,7 @@ st.set_page_config(page_title="Generador de PDF", page_icon="📝")
 st.title("🧾 Generador de PDF con Plantilla")
 st.caption(f"Streamlit {st.__version__}")
 
-# Si tu plantilla se llama distinto, cámbialo aquí o súbela desde la UI
-DEFAULT_TEMPLATE_NAME = "Membrete textos editable.pdf"
+DEFAULT_TEMPLATE_NAME = "Membrete textos editable.pdf"  # si está en la carpeta, la usa por defecto
 
 # ============
 #  UTILIDADES
@@ -55,7 +54,7 @@ def _nombre_campo(annot_obj) -> str:
 # ============================================
 #  GENERACIÓN DEL CONTENIDO (SIN PLANTILLA)
 # ============================================
-def crear_pdf_contenido(titulo: str, cuerpo: str, solo_primera_con_titulo: bool):
+def crear_pdf_contenido(titulo: str, cuerpo: str, solo_primera_con_titulo: bool) -> PdfReader:
     """
     Devuelve un PdfReader en memoria con:
       - Título solo en la 1a página (si solo_primera_con_titulo=True).
@@ -121,7 +120,7 @@ def crear_pdf_contenido(titulo: str, cuerpo: str, solo_primera_con_titulo: bool)
 # ===============================================
 #  FUSIÓN CON PLANTILLA Y LIMPIEZA DE CAMPOS
 # ===============================================
-def mezclar_con_plantilla_y_limpiar(contenido_reader: PdfReader, plantilla_reader: PdfReader):
+def mezclar_con_plantilla_y_limpiar(contenido_reader: PdfReader, plantilla_reader: PdfReader) -> PdfWriter:
     """
     Superpone cada página de `contenido_reader` sobre la plantilla.
     Limpia:
@@ -176,12 +175,11 @@ if st.button("Generar PDF", key="go"):
                 # 1) Construye el contenido
                 contenido_reader = crear_pdf_contenido(titulo, cuerpo, solo_primera_con_titulo)
 
-                # 2) Plantilla: subida por el usuario o por archivo local por defecto (si existe)
+                # 2) Plantilla: subida por el usuario o archivo local por defecto (si existe)
                 plantilla_reader = None
                 if plantilla_file is not None:
                     plantilla_reader = PdfReader(plantilla_file)
                 else:
-                    # Usa plantilla local si existe en la carpeta del repo
                     if os.path.exists(DEFAULT_TEMPLATE_NAME):
                         plantilla_reader = PdfReader(DEFAULT_TEMPLATE_NAME)
 
@@ -193,13 +191,17 @@ if st.button("Generar PDF", key="go"):
                     with open(out_path, "wb") as fh:
                         writer.write(fh)
                 else:
-                    # Sin plantilla: escribir contenido tal cual
+                    # >>> CORRECCIÓN AQUI: NO usar append_pages_from_reader (no existe en PyPDF2 3.x)
+                    writer = PdfWriter()
+                    for p in contenido_reader.pages:
+                        writer.add_page(p)
                     with open(out_path, "wb") as fh:
-                        PdfWriter().append_pages_from_reader(contenido_reader).write(fh)
+                        writer.write(fh)
 
                 # 4) Botón de descarga
                 with open(out_path, "rb") as f:
                     st.download_button("⬇️ Descargar PDF", f, file_name=os.path.basename(out_path), mime="application/pdf")
 
         except Exception as e:
-            st.error(f"Ocurrió un error: {e}")
+            # Muestra el error concreto para poder depurar si algo más aparece
+            st.error(f"Ocurrió un error: {type(e).__name__}: {e}")
