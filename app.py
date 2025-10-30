@@ -43,33 +43,34 @@ def safe_int(value, default=0):
         return default
 
 def _field_name(annot) -> str:
-    """
-    Obtiene el nombre del campo (/T) de forma segura.
-    Evita usar to_unicode() porque a veces puede ser None en ciertos PDFs.
-    """
+    """Nombre del campo (/T) como texto plano, sin llamadas a métodos."""
     t = annot.get("/T")
     if t is None:
         return ""
     return str(t).strip("()").strip()
 
 def find_annotation_in_pdf(pdf_template, field_name):
-    """Busca una anotación por nombre en TODO el documento (sin to_unicode())."""
+    """Busca una anotación por nombre en TODO el documento usando comparación por cadenas."""
     for page in pdf_template.pages:
-        annots = page.get("/Annots") or []
+        annots = page.get("/Annots")
+        if not annots:
+            continue
         for annot in annots:
-            if annot.get("/Subtype") == PdfName.Widget:
-                if _field_name(annot) == field_name:
-                    return annot
+            # Comparar por cadena evita llamadas internas
+            if str(annot.get("/Subtype")) == "/Widget" and _field_name(annot) == field_name:
+                return annot
     return None
 
 def find_annotation_in_page(page, field_name):
-    """Busca una anotación por nombre en UNA página (sin to_unicode())."""
-    annots = page.get("/Annots") or []
+    """Busca una anotación por nombre en UNA página usando comparación por cadenas."""
+    annots = page.get("/Annots")
+    if not annots:
+        return None
     for annot in annots:
-        if annot.get("/Subtype") == PdfName.Widget:
-            if _field_name(annot) == field_name:
-                return annot
+        if str(annot.get("/Subtype")) == "/Widget" and _field_name(annot) == field_name:
+            return annot
     return None
+
 
 
 # ===================== Núcleo: rellenar y paginar =====================
@@ -117,7 +118,7 @@ def fill_pdf(template_reader, titulo, cuerpo,
             template_reader.pages.append(page)
 
         # Borrar campo de título en copias si se pidió
-        if idx > 1 and titulo_solo_primera:
+            if idx > 1 and titulo_solo_primera:
             annots = page.get("/Annots") or []
             to_remove = []
             for annot in annots:
@@ -125,6 +126,7 @@ def fill_pdf(template_reader, titulo, cuerpo,
                     to_remove.append(annot)
             for a in to_remove:
                 annots.remove(a)
+
 
         # Rellenar el cuerpo
         body_annot = find_annotation_in_page(page, BODY_FIELD_NAME)
