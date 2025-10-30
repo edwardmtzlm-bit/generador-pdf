@@ -12,18 +12,21 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from PyPDF2 import PdfReader as PyPdfReader, PdfWriter as PyPdfWriter
 
-# ---- Config de página ----
+
+# ===================== Configuración básica =====================
 st.set_page_config(page_title="Generador de PDF", page_icon="🧾", layout="centered")
 st.title("🧾 Generador de PDF con plantilla")
 st.caption("Rellena tu membrete, pagina el texto automáticamente y (opcional) coloca una imagen.")
 
-# ---- Nombres de campos en tu formulario PDF ----
+
+# Nombres de campos del formulario PDF (deben existir en la plantilla)
 TITLE_FIELD_NAME = "Text Title"
 BODY_FIELD_NAME  = "Text Body"
 
 DEFAULT_TEMPLATE_PATH = "Membrete textos editable.pdf"
 
-# ---- Utilidades ----
+
+# ===================== Utilidades =====================
 def sanitize_filename(name: str) -> str:
     name = name.lower().replace(" ", "_")
     name = re.sub(r"[^a-z0-9_]", "", name)
@@ -39,50 +42,42 @@ def safe_int(value, default=0):
     except Exception:
         return default
 
+def _field_name(annot) -> str:
+    """
+    Obtiene el nombre del campo (/T) de forma segura.
+    Evita usar to_unicode() porque a veces puede ser None en ciertos PDFs.
+    """
+    t = annot.get("/T")
+    if t is None:
+        return ""
+    return str(t).strip("()").strip()
+
 def find_annotation_in_pdf(pdf_template, field_name):
-    """Busca una anotación (widget) por nombre en TODO el documento."""
+    """Busca una anotación por nombre en TODO el documento (sin to_unicode())."""
     for page in pdf_template.pages:
-        annots = page.get("/Annots")
-        if not annots:
-            continue
+        annots = page.get("/Annots") or []
         for annot in annots:
-            if annot.get("/Subtype") != PdfName.Widget:
-                continue
-            t = annot.get("/T")
-            if t is None:
-                continue
-            try:
-                t_name = t.to_unicode()
-            except Exception:
-                t_name = str(t).strip("()")
-            if t_name == field_name:
-                return annot
+            if annot.get("/Subtype") == PdfName.Widget:
+                if _field_name(annot) == field_name:
+                    return annot
     return None
 
 def find_annotation_in_page(page, field_name):
-    """Busca una anotación (widget) por nombre en UNA página."""
-    annots = page.get("/Annots")
-    if not annots:
-        return None
+    """Busca una anotación por nombre en UNA página (sin to_unicode())."""
+    annots = page.get("/Annots") or []
     for annot in annots:
-        if annot.get("/Subtype") != PdfName.Widget:
-            continue
-        t = annot.get("/T")
-        if t is None:
-            continue
-        try:
-            t_name = t.to_unicode()
-        except Exception:
-            t_name = str(t).strip("()")
-        if t_name == field_name:
-            return annot
+        if annot.get("/Subtype") == PdfName.Widget:
+            if _field_name(annot) == field_name:
+                return annot
     return None
 
-def fill_pdf(template_reader, titulo, cuerpo, chars_por_linea=95, lineas_por_pagina=35, titulo_solo_primera=True):
+
+# ===================== Núcleo: rellenar y paginar =====================
+def fill_pdf(template_reader, titulo, cuerpo,
+             chars_por_linea=95, lineas_por_pagina=35, titulo_solo_primera=True):
     """
-    Duplica páginas según sea necesario y rellena texto paginado.
-    Si titulo_solo_primera=True, deja el título solo en la página 1
-    (borra el campo de título en las páginas duplicadas).
+    Duplica páginas según sea necesario y rellena el texto paginado.
+    Si titulo_solo_primera=True, solo la primera hoja conserva el título.
     """
     # Asegurar NeedAppearances
     acroform = getattr(template_reader.Root, "AcroForm", None)
@@ -91,8 +86,7 @@ def fill_pdf(template_reader, titulo, cuerpo, chars_por_linea=95, lineas_por_pag
         acroform = template_reader.Root.AcroForm
     acroform.update(PdfDict(NeedAppearances=PdfObject("true")))
 
-    # ---- 1) Paginado básico por caracteres/lineas
-    # Respeta saltos de línea existentes y envuelve cada párrafo
+    # 1) Paginado básico por caracteres/líneas (respeta saltos de línea existentes)
     lineas = []
     for bloque in cuerpo.splitlines():
         if not bloque.strip():
@@ -106,13 +100,13 @@ def fill_pdf(template_reader, titulo, cuerpo, chars_por_linea=95, lineas_por_pag
     for i in range(0, len(lineas), lineas_por_pagina):
         trozos.append("\n".join(lineas[i:i+lineas_por_pagina]))
 
-    # ---- 2) Título solo en la primera página
+    # 2) Título solo en la primera página
     first_title = find_annotation_in_pdf(template_reader, TITLE_FIELD_NAME)
     if first_title:
         first_title.update(PdfDict(V=PdfString.encode(titulo),
                                    DV=PdfString.encode(titulo)))
 
-    # ---- 3) Rellenar cuerpo en N páginas
+    # 3) Rellenar cuerpo en N páginas (clonando página base cuando haga falta)
     base_page = template_reader.pages[0]
 
     for idx, texto_parcial in enumerate(trozos, start=1):
@@ -122,30 +116,23 @@ def fill_pdf(template_reader, titulo, cuerpo, chars_por_linea=95, lineas_por_pag
             page = deepcopy(base_page)
             template_reader.pages.append(page)
 
-        # Borrar el campo de título en copias si se pidió
+        # Borrar campo de título en copias si se pidió
         if idx > 1 and titulo_solo_primera:
             annots = page.get("/Annots") or []
             to_remove = []
             for annot in annots:
-                t = annot.get("/T")
-                if t is None:
-                    continue
-                try:
-                    t_name = t.to_unicode()
-                except Exception:
-                    t_name = str(t).strip("()")
-                if t_name == TITLE_FIELD_NAME:
+                if _field_name(annot) == TITLE_FIELD_NAME:
                     to_remove.append(annot)
             for a in to_remove:
                 annots.remove(a)
 
-        # Rellenar el cuerpo de esa página
+        # Rellenar el cuerpo
         body_annot = find_annotation_in_page(page, BODY_FIELD_NAME)
         if body_annot:
-            # Renombrar el campo para que cada página sea independiente
+            # Renombrar para que cada página sea independiente (evita duplicación de valores)
             nuevo_nombre = f"{BODY_FIELD_NAME}_{idx}"
             body_annot.update(PdfDict(T=PdfString.encode(nuevo_nombre)))
-            # Valor y multilínea
+            # Valor + multilínea
             body_annot.update(PdfDict(V=PdfString.encode(texto_parcial),
                                       DV=PdfString.encode(texto_parcial)))
             current_flags = safe_int(body_annot.get("/Ff"), 0)
@@ -153,27 +140,28 @@ def fill_pdf(template_reader, titulo, cuerpo, chars_por_linea=95, lineas_por_pag
             if (current_flags & multiline_flag) == 0:
                 body_annot.update(PdfDict(Ff=PdfObject(str(current_flags | multiline_flag))))
 
-    # ---- 4) Escribir a memoria
+    # 4) Salida a memoria
     out_buf = io.BytesIO()
     PdfWriter().write(out_buf, template_reader)
     return out_buf.getvalue()
 
-def overlay_image_on_pdf(pdf_bytes, img_bytes, x=400, y=700, w=150, h=80, pagina=1, aplicar_a_todas=False):
+
+def overlay_image_on_pdf(pdf_bytes, img_bytes, x=400, y=700, w=150, h=80,
+                         pagina=1, aplicar_a_todas=False):
     """
     Superpone una imagen PNG/JPG sobre el PDF generado.
-    x,y en puntos (0,0 esquina inferior izquierda). letter=612x792.
+    Coordenadas en puntos (caja letter: 612 x 792; origen en esquina inferior-izquierda).
     """
     src = PyPdfReader(io.BytesIO(pdf_bytes))
     dst = PyPdfWriter()
 
-    # Crea un PDF por cada página que necesite overlay y lo fusiona
     for i in range(len(src.pages)):
         page = src.pages[i]
         if (i == (pagina - 1)) or aplicar_a_todas:
-            # Generar un PDF temporal con la imagen en la posición solicitada
             buf = io.BytesIO()
             c = canvas.Canvas(buf, pagesize=letter)
-            c.drawImage(io.BytesIO(img_bytes), x, y, width=w, height=h, preserveAspectRatio=True, mask='auto')
+            c.drawImage(io.BytesIO(img_bytes), x, y, width=w, height=h,
+                        preserveAspectRatio=True, mask='auto')
             c.save()
             buf.seek(0)
 
@@ -187,7 +175,8 @@ def overlay_image_on_pdf(pdf_bytes, img_bytes, x=400, y=700, w=150, h=80, pagina
     dst.write(out)
     return out.getvalue()
 
-# ------------- UI -------------
+
+# ===================== Interfaz Streamlit =====================
 st.subheader("1) Selecciona la plantilla")
 up = st.file_uploader("Sube tu plantilla (opcional). Si no subes, usaré la que está en la carpeta.",
                       type=["pdf"])
@@ -202,8 +191,10 @@ cuerpo = st.text_area(
 )
 
 st.subheader("3) Ajustes de paginado")
-chars_por_linea = st.slider("Caracteres por línea (ajusta al ancho real de tu campo)", 60, 140, 95, 1)
-lineas_por_pagina = st.slider("Líneas por página (ajusta al alto real de tu campo)", 20, 60, 35, 1)
+chars_por_linea = st.slider("Caracteres por línea (ajusta al ancho real de tu campo)",
+                            60, 140, 95, 1)
+lineas_por_pagina = st.slider("Líneas por página (ajusta al alto real de tu campo)",
+                              20, 60, 35, 1)
 titulo_solo_primera = st.checkbox("Solo primera hoja con título", value=True)
 
 st.subheader("4) Imagen (opcional)")
