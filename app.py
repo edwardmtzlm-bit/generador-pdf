@@ -6,95 +6,95 @@ import tempfile
 import os
 from PyPDF2 import PdfReader, PdfWriter
 
-# --- Configuración de la aplicación ---
+# --- Configuración ---
 st.set_page_config(page_title="Generador de PDF", page_icon="📝")
 
-# --- Limpieza de caché (ayuda a evitar errores visuales tras deploy/restart) ---
-try:
-    st.cache_data.clear()
-    st.cache_resource.clear()
-except Exception:
-    pass
-
-# --- Título e introducción ---
 st.title("🧾 Generador de PDF con Plantilla")
-st.write("Sube tu plantilla PDF, escribe el contenido y genera tu documento final automáticamente paginado.")
+st.caption(f"Versión de Streamlit: {st.__version__}")
 
-# --- Subida de plantilla base ---
-plantilla = st.file_uploader("Sube tu plantilla PDF (opcional)", type=["pdf"])
+# 1) Plantilla (opcional)
+plantilla = st.file_uploader(
+    "Sube tu plantilla PDF (opcional)", type=["pdf"], key="tpl"
+)
 
-# --- Contenido del usuario ---
-titulo = st.text_input("Título (solo se imprimirá en la primera hoja)", "Reporte de Ventas")
-contenido = st.text_area("Cuerpo del artículo (se paginará automáticamente)", height=250)
+# 2) Contenido
+titulo = st.text_input(
+    "Título (solo se imprimirá en la primera hoja)", "Reporte de Ventas", key="title"
+)
+contenido = st.text_area(
+    "Cuerpo del artículo (se paginará automáticamente)", height=250, key="body"
+)
 
-# --- Ajustes de paginado ---
+# 3) Paginado
 st.subheader("Ajustes de paginado")
-chars_por_linea = st.slider("Caracteres por línea", 50, 120, 95)
-lineas_por_pagina = st.slider("Líneas por página", 20, 60, 35)
-solo_primera_con_titulo = st.checkbox("Solo primera hoja con título", value=True)
+chars_por_linea = st.slider("Caracteres por línea", 50, 120, 95, key="cpl")
+lineas_por_pagina = st.slider("Líneas por página", 20, 60, 35, key="lpp")
+solo_primera_con_titulo = st.checkbox(
+    "Solo primera hoja con título", value=True, key="title_first_only"
+)
 
-# --- Imagen opcional ---
+# 4) Imagen (opcional)
 st.subheader("Imagen (opcional)")
-imagen = st.file_uploader("Sube imagen (jpg, jpeg, png)", type=["jpg", "jpeg", "png"])
-pos_x = st.number_input("Posición X (0-612)", 0, 612, 400)
-pos_y = st.number_input("Posición Y (0-792)", 0, 792, 700)
-ancho = st.number_input("Ancho (px)", 50, 600, 150)
-alto = st.number_input("Alto (px)", 50, 600, 80)
-aplicar_a_todas = st.checkbox("Aplicar imagen a todas las páginas", value=False)
-pagina_destino = st.number_input("Página de destino de la imagen", 1, 20, 1)
+imagen = st.file_uploader(
+    "Sube imagen (jpg, jpeg, png)", type=["jpg", "jpeg", "png"], key="img"
+)
+pos_x = st.number_input("Posición X (0-612)", 0, 612, 400, key="x")
+pos_y = st.number_input("Posición Y (0-792)", 0, 792, 700, key="y")
+ancho = st.number_input("Ancho (px)", 50, 600, 150, key="w")
+alto = st.number_input("Alto (px)", 50, 600, 80, key="h")
+aplicar_a_todas = st.checkbox(
+    "Aplicar imagen a todas las páginas", value=False, key="img_all"
+)
+pagina_destino = st.number_input("Página de destino de la imagen", 1, 20, 1, key="img_page")
 
-# --- Generar PDF ---
-if st.button("Generar PDF"):
+# 5) Generar
+if st.button("Generar PDF", key="generate"):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = os.path.join(tmpdir, "output.pdf")
             c = canvas.Canvas(pdf_path, pagesize=letter)
 
-            # Dividir el texto en páginas (paginado simple por caracteres/líneas)
+            # Partición de texto en páginas
             lineas = contenido.splitlines()
-            paginas = []
-            pagina_actual = []
+            paginas, pagina_actual = [], []
 
             for linea in lineas:
-                # Si una línea supera el límite, partir en trozos
+                # Rompe líneas largas según ancho configurado
                 while len(linea) > chars_por_linea:
                     pagina_actual.append(linea[:chars_por_linea])
                     linea = linea[chars_por_linea:]
                 pagina_actual.append(linea)
 
-                # Si se llenó la página, apilar y continuar
                 if len(pagina_actual) >= lineas_por_pagina:
                     paginas.append(pagina_actual)
                     pagina_actual = []
 
-            # Agregar última página si hay remanente
             if pagina_actual:
                 paginas.append(pagina_actual)
 
-            # Escribir páginas
+            # Render de páginas
             for i, pagina in enumerate(paginas):
-                # Título solo en primera hoja (si se marcó la opción)
+                # Título en primera hoja (o en todas si desmarcas)
                 if i == 0 or not solo_primera_con_titulo:
                     c.setFont("Helvetica-Bold", 14)
                     c.drawString(72, 750, titulo)
 
-                # Cuerpo
                 y = 720
                 c.setFont("Helvetica", 11)
                 for linea in pagina:
                     c.drawString(72, y, linea)
-                    y -= 18  # espaciado entre líneas
+                    y -= 18
 
                 # Imagen opcional
                 if imagen and (aplicar_a_todas or (i + 1) == pagina_destino):
                     img = ImageReader(imagen)
-                    c.drawImage(img, pos_x, pos_y, ancho, alto, mask='auto')
+                    c.drawImage(img, pos_x, pos_y, ancho, alto, mask="auto")
 
                 c.showPage()
 
             c.save()
 
-            # Fusionar con plantilla (si se subió)
+            # Mezcla con plantilla si se subió
             if plantilla:
                 reader_plantilla = PdfReader(plantilla)
                 reader_contenido = PdfReader(pdf_path)
@@ -115,9 +115,10 @@ if st.button("Generar PDF"):
             else:
                 final_path = pdf_path
 
-            # Descargar el PDF final
             with open(final_path, "rb") as f:
-                st.download_button("⬇️ Descargar PDF", f, file_name="resultado.pdf", mime="application/pdf")
+                st.download_button(
+                    "⬇️ Descargar PDF", f, file_name="resultado.pdf", mime="application/pdf"
+                )
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
